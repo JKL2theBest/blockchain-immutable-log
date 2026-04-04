@@ -82,7 +82,9 @@ if __name__ == "__main__":
     blockchain_service = BlockchainServiceMock()
 
     # 2. Готовим тестовые данные (как будто прочитали из файла)
-    test_log_data = b"[2026-03-12 10:00:00] User 'admin' logged in successfully from 192.168.1.100"
+    test_log_data = (
+        b"[2026-03-12 10:00:00] User 'admin' logged in successfully from 192.168.1.100"
+    )
     print(f"\n[1] Тестирование с корректными данными:\n    '{test_log_data.decode()}'")
 
     # 3. Вычисляем хэш
@@ -95,7 +97,6 @@ if __name__ == "__main__":
         print(f"[+] Получен хэш транзакции: {tx}")
     except ValueError as e:
         print(f"[!] Ошибка: {e}")
-
 
     # 5. Тестирование с некорректными (пустыми) данными
     print("\n[2] Тестирование с пустым файлом:")
