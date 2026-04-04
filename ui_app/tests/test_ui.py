@@ -1,4 +1,3 @@
-# D:\...\ui_app\tests\test_ui.py
 from streamlit.testing.v1 import AppTest
 import os
 
@@ -20,7 +19,7 @@ def test_full_audit_flow():
     with open(ORIGINAL_FILE, "rb") as f:
         file_content = f.read()
 
-    # ИСПРАВЛЕНИЕ: Теперь передаем и контент, и имя файла
+    # Передаем и контент, и имя файла
     at.file_uploader(key="register_uploader").upload(
         content=file_content, filename="original_log.txt"
     ).run()

@@ -1,10 +1,6 @@
-# D:\...\blockchain-immutable-log\ui_app\src\app.py
-
 import streamlit as st
 import time
 
-# Важно: Используем относительный импорт, так как app.py и core/ находятся внутри пакета src
-# Запускать приложение нужно будет как модуль, чтобы Python правильно понял пути
 from src.core.hashing import calculate_sha256, BlockchainServiceMock
 
 # --- 1. Конфигурация страницы ---

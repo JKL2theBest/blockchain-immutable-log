@@ -5,7 +5,6 @@ from src.core.hashing import calculate_sha256, BlockchainServiceMock
 
 def test_calculate_sha256_valid_data():
     """Проверка правильности вычисления хэша динамически."""
-    # Используем сырые байты, чтобы избежать проблем с кодировками редактора
     data = b"hello blockchain"
 
     # Считаем хэш эталонным методом hashlib прямо в тесте
