@@ -12,7 +12,7 @@ WORKDIR /app
 # Отключение создания виртуальных окружений внутри контейнера
 RUN poetry config virtualenvs.create false
 
-COPY pyproject.toml ./
+COPY pyproject.toml poetry.lock* ./
 
 RUN poetry install --no-interaction --no-ansi --no-root
 

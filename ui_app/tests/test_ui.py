@@ -6,13 +6,13 @@ FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 ORIGINAL_FILE = os.path.join(FIXTURE_DIR, "original_log.txt")
 
 
-def test_app_smoke():
+def test_app_smoke() -> None:
     """Проверка, что приложение запускается без исключений."""
     at = AppTest.from_file("src/app.py").run()
     assert not at.exception
 
 
-def test_full_audit_flow():
+def test_full_audit_flow() -> None:
     """Интеграционный тест: полная цепочка регистрации и аудита."""
     at = AppTest.from_file("src/app.py").run()
 
