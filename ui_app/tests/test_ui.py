@@ -41,3 +41,28 @@ def test_full_audit_flow() -> None:
     assert not at.exception
     # Проверяем, что в UI появилось сообщение об успехе (индекс [0] в списке success-элементов)
     assert "УСПЕХ" in at.success[0].value
+
+
+def test_compromised_audit_flow() -> None:
+    """QA-тест: проверка обнаружения подмены файла (компрометация)."""
+    at = AppTest.from_file("src/app.py").run()
+
+    COMPROMISED_FILE = os.path.join(FIXTURE_DIR, "compromised_log.txt")
+
+    # 1. Загружаем и регистрируем ОРИГИНАЛ
+    with open(ORIGINAL_FILE, "rb") as f:
+        at.file_uploader(key="register_uploader").upload(
+            content=f.read(), filename="original_log.txt"
+        ).run()
+    at.button(key="register_button").click().run()
+
+    # 2. На вкладке аудита загружаем СКОМПРОМЕТИРОВАННЫЙ файл
+    with open(COMPROMISED_FILE, "rb") as f:
+        at.file_uploader(key="audit_uploader").upload(
+            content=f.read(), filename="compromised_log.txt"
+        ).run()
+    at.button(key="audit_button").click().run()
+
+    # 3. Проверяем, что система выдала ошибку (error)
+    assert not at.exception
+    assert "АЛЕРТ" in at.error[0].value
