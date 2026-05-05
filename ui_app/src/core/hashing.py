@@ -1,7 +1,18 @@
 import hashlib
 import time
 from abc import ABC, abstractmethod
-from typing import final
+from typing import final, cast
+import os
+
+from dotenv import load_dotenv
+from eth_typing import ChecksumAddress
+from web3 import Web3
+from web3.exceptions import ContractLogicError
+from web3.middleware.proof_of_authority import ExtraDataToPOAMiddleware
+from web3.types import TxParams
+
+# Загружаем переменные окружения из .env файла
+load_dotenv()
 
 
 class BlockchainService(ABC):
@@ -12,98 +23,122 @@ class BlockchainService(ABC):
 
     @abstractmethod
     def register_hash(self, file_hash: str) -> str:
-        """
-        Регистрирует хэш файла в смарт-контракте.
-
-        Args:
-            file_hash: SHA-256 хэш файла в виде hex-строки.
-
-        Returns:
-            Строку с хэшем транзакции в блокчейне.
-        """
+        """Регистрирует хэш файла в смарт-контракте."""
         pass
+
+    @abstractmethod
+    def get_all_logs(self) -> list[dict]:
+        """Получает все записи из смарт-контракта."""
+        pass
+
+
+class RealBlockchainService(BlockchainService):
+    """
+    Реальный сервис взаимодействия со смарт-контрактом через Web3.py.
+    """
+
+    def __init__(self, rpc_url: str, contract_address: str, abi: list):
+        self.w3 = Web3(Web3.HTTPProvider(rpc_url))
+        # Важно для сетей типа Ganache/PoA
+        self.w3.middleware_onion.inject(
+            ExtraDataToPOAMiddleware,
+            layer=0,
+        )
+        if not self.w3.is_connected():
+            raise ConnectionError(f"Не удалось подключиться к сети: {rpc_url}")
+
+        checksum_address = cast(
+            ChecksumAddress,
+            Web3.to_checksum_address(contract_address),
+        )
+
+        self.contract = self.w3.eth.contract(
+            address=checksum_address,
+            abi=abi,
+        )
+
+        private_key = os.getenv("PRIVATE_KEY")
+        if not private_key:
+            raise ValueError("PRIVATE_KEY не найден в переменных окружения.")
+
+        self.account = self.w3.eth.account.from_key(private_key)
+        self.w3.eth.default_account = self.account.address
+
+    def register_hash(self, file_hash: str) -> str:
+        """Формирует, подписывает и отправляет транзакцию в смарт-контракт."""
+        print(f"[*] Отправка транзакции для хэша: {file_hash[:10]}...")
+        nonce = self.w3.eth.get_transaction_count(self.account.address)
+
+        tx_params: TxParams = {
+            "from": self.account.address,
+            "nonce": nonce,
+        }
+
+        try:
+            tx = self.contract.functions.registerHash(file_hash).build_transaction(
+                tx_params
+            )
+            signed_tx = self.w3.eth.account.sign_transaction(
+                tx, private_key=self.account.key
+            )
+            tx_hash = self.w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+            receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
+
+            if receipt["status"] != 1:
+                raise Exception(f"Транзакция не удалась (reverted). Receipt: {receipt}")
+
+            return tx_hash.hex()
+        except ContractLogicError as e:
+            raise Exception(f"Ошибка логики смарт-контракта (нет прав?): {e}")
+
+    def get_all_logs(self) -> list[dict]:
+        """Считывает все сохраненные логи напрямую из смарт-контракта."""
+        try:
+            total_logs = self.contract.functions.getLogsCount().call()
+            logs = []
+            for i in range(total_logs):
+                log_data = self.contract.functions.auditTrail(i).call()
+                logs.append(
+                    {
+                        "Хэш файла (SHA-256)": log_data[0],
+                        "Timestamp (Блокчейн)": log_data[1],
+                    }
+                )
+            return logs
+        except Exception as e:
+            raise RuntimeError(f"Ошибка при чтении из блокчейна: {e}") from e
 
 
 @final
 class BlockchainServiceMock(BlockchainService):
-    """
-    Класс-заглушка (Mock) для имитации работы с блокчейном.
-    Используется для локальной разработки и тестирования UI без реальных транзакций.
-    """
+    """Класс-заглушка (Mock) для имитации работы с блокчейном."""
+
+    _MOCK_STORAGE: list[dict[str, str | int]] = []
 
     def register_hash(self, file_hash: str) -> str:
-        """
-        Имитирует отправку хэша в смарт-контракт.
-
-        Args:
-            file_hash: SHA-256 хэш файла.
-
-        Returns:
-            Сгенерированный хэш фейковой транзакции.
-        """
+        """Имитирует отправку хэша в смарт-контракт."""
         print(f"[*] Имитация отправки хэша '{file_hash[:10]}...' в блокчейн...")
-        time.sleep(1.5)  # Имитация задержки сети
-        # Генерируем фейковый хэш транзакции, похожий на настоящий
+        time.sleep(1)
+        self._MOCK_STORAGE.append(
+            {
+                "Хэш файла (SHA-256)": file_hash,
+                "Timestamp (Блокчейн)": int(time.time()),
+            }
+        )
         mock_tx_hash = f"0x{hashlib.sha256(file_hash.encode()).hexdigest()[:40]}"
         print(f"[+] Хэш успешно зарегистрирован в транзакции: {mock_tx_hash}")
         return mock_tx_hash
 
+    def get_all_logs(self) -> list[dict]:
+        """Возвращает данные из мок-хранилища."""
+        print("[*] Чтение данных из Mock-хранилища...")
+        return self._MOCK_STORAGE
+
 
 def calculate_sha256(file_bytes: bytes) -> str:
-    """
-    Вычисляет SHA-256 хэш для содержимого файла.
-
-    Функция безопасна для больших файлов, так как работает с уже
-    прочитанными в память байтами. Обработка MemoryError
-    должна происходить на уровне UI при чтении файла.
-
-    Args:
-        file_bytes: Содержимое файла в виде байтовой строки.
-
-    Returns:
-        SHA-256 хэш в виде hex-строки.
-
-    Raises:
-        ValueError: Если на вход поданы пустые данные.
-    """
+    """Вычисляет SHA-256 хэш для содержимого файла."""
     if not file_bytes:
         raise ValueError("Нельзя хэшировать пустой файл.")
-
     sha256_hash = hashlib.sha256()
     sha256_hash.update(file_bytes)
     return sha256_hash.hexdigest()
-
-
-# --- Блок для самостоятельного запуска и проверки ---
-if __name__ == "__main__":
-    print("--- Запуск демонстрации модуля hashing.py ---")
-
-    # 1. Создаем экземпляр нашего мок-сервиса
-    blockchain_service = BlockchainServiceMock()
-
-    # 2. Готовим тестовые данные (как будто прочитали из файла)
-    test_log_data = (
-        b"[2026-03-12 10:00:00] User 'admin' logged in successfully from 192.168.1.100"
-    )
-    print(f"\n[1] Тестирование с корректными данными:\n    '{test_log_data.decode()}'")
-
-    # 3. Вычисляем хэш
-    try:
-        log_hash = calculate_sha256(test_log_data)
-        print(f"[+] Вычислен SHA-256 хэш: {log_hash}")
-
-        # 4. "Отправляем" хэш в блокчейн
-        tx = blockchain_service.register_hash(log_hash)
-        print(f"[+] Получен хэш транзакции: {tx}")
-    except ValueError as e:
-        print(f"[!] Ошибка: {e}")
-
-    # 5. Тестирование с некорректными (пустыми) данными
-    print("\n[2] Тестирование с пустым файлом:")
-    empty_data = b""
-    try:
-        calculate_sha256(empty_data)
-    except ValueError as e:
-        print(f"[+] Успешно перехвачена ошибка: {e}")
-
-    print("\n--- Демонстрация завершена ---")
