@@ -205,3 +205,11 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# База данных
+shadow_db.json
+
+*.py[cod]
+.venv/
+# Docker
+.docker_temp/

@@ -1,4 +1,4 @@
 {
-  "rpc_url": "http://0.0.0.0:7545",
-  "contract_address": "<contract_address>"
+  "rpc_url": "rpc_url",
+  "contract_address": "contract_address"
 }

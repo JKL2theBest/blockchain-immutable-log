@@ -6,6 +6,7 @@ services:
     volumes:
       - ./src:/app/src
       - ../blockchain:/blockchain
+      - ./shadow_db.json:/app/shadow_db.json
     env_file:
       - .env 
     environment:

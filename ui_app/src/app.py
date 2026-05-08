@@ -1,200 +1,287 @@
 import os
-import time
 import json
+import hashlib
+import time
+import base64
 import streamlit as st
-
-# Корректные импорты из нашего модуля core
-from src.core.hashing import (
-    calculate_sha256,
-    BlockchainServiceMock,
-    RealBlockchainService,
-)
-
-# --- 1. Конфигурация страницы ---
-st.set_page_config(
-    page_title="ImmutableLog Dashboard",
-    page_icon="🛡️",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+from src.core.hashing import BlockchainServiceMock, RealBlockchainService
 
 
-# --- 2. Функции-хелперы для загрузки и инициализации ---
+def get_base64(path):
+    if os.path.exists(path):
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode()
+    return ""
+
+
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+ASSETS_DIR = os.path.join(os.path.dirname(CURRENT_DIR), "assets")
+
+font_b64 = get_base64(os.path.join(ASSETS_DIR, "GlitchGoblin.ttf"))
+logo_b64 = get_base64(os.path.join(ASSETS_DIR, "logo.png"))
+chain_b64 = get_base64(os.path.join(ASSETS_DIR, "chain.png"))
+flower_b64 = get_base64(os.path.join(ASSETS_DIR, "flower.png"))
+
+st.set_page_config(page_title="ImmutableLog", layout="wide")
+
+custom_css = f"""
+<style>
+    @font-face {{
+        font-family: 'Glitch Goblin';
+        src: url(data:font/ttf;base64,{font_b64}) format('truetype');
+    }}
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+    html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"], .stMarkdown, p, span, label, li, button {{
+        font-family: 'JetBrains Mono', monospace !important;
+        color: #DAF1DD !important;
+    }}
+    h1, h2, h3, [data-testid="stMarkdownContainer"] h1, [data-testid="stMarkdownContainer"] h2, .glitch-text {{
+        font-family: 'Glitch Goblin', sans-serif !important;
+        color: #8EB69C !important;
+        text-transform: none !important;
+        letter-spacing: 2px !important;
+        font-weight: normal !important;
+    }}
+    span[data-testid="stIconMaterial"], .material-symbols-rounded {{
+        font-family: 'Material Symbols Rounded' !important;
+    }}
+    header, [data-testid="stHeader"], [data-testid="stSidebarCollapseButton"] {{
+        display: none !important;
+    }}
+    .chain-divider {{
+        height: 24px;
+        background-image: url(data:image/png;base64,{chain_b64});
+        background-repeat: round !important;
+        background-size: auto 100% !important;
+        margin: 25px 0;
+        opacity: 0.6;
+    }}
+    .fixed-flower {{
+        position: fixed; bottom: 25px; left: 25px; width: 65px;
+        opacity: 0.5; z-index: 10000; pointer-events: none;
+    }}
+    .sidebar-logo-container {{
+        display: flex; flex-direction: column; align-items: center; margin-bottom: 2rem;
+    }}
+    .sidebar-logo-container img {{
+        width: 140px; filter: drop-shadow(0 0 15px rgba(142, 182, 156, 0.4));
+    }}
+    .header-with-icon {{ display: flex; align-items: center; gap: 15px; margin: 1.5rem 0; }}
+    .header-with-icon img {{ width: 42px; }}
+    .stTabs button p {{
+        font-family: 'JetBrains Mono', monospace !important;
+    }}
+    
+    .custom-alert {{
+        padding: 12px !important;
+        border: 1px solid #8EB69C !important;
+        background-color: rgba(142, 182, 156, 0.1) !important; /* Прозрачный хвойный */
+        color: #DAF1DD !important;
+        border-radius: 4px !important;
+        margin-bottom: 20px !important;
+        font-family: 'JetBrains Mono', monospace !important;
+    }}
+    .custom-error {{
+        border-color: #ff4b4b !important;
+        background-color: rgba(255, 75, 75, 0.1) !important;
+    }}
+</style>
+
+<img src="data:image/png;base64,{flower_b64}" class="fixed-flower">
+"""
+st.markdown(custom_css, unsafe_allow_html=True)
+
+def icon_header(text, icon_name, is_main=False):
+    icon_path = os.path.join(ASSETS_DIR, f"{icon_name}.png")
+    icon_b64 = get_base64(icon_path)
+    tag = "h1" if is_main else "h2"
+    html = f"""
+    <div class="header-with-icon">
+        <img src="data:image/png;base64,{icon_b64}">
+        <{tag} class="glitch-text" style="margin:0; font-family: 'Glitch Goblin', sans-serif !important;">{text}</{tag}>
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+def draw_divider():
+    st.markdown('<div class="binary-divider"></div>', unsafe_allow_html=True)
+
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "..", ".."))
+SHADOW_DB_PATH = os.path.join(PROJECT_ROOT, "shadow_db.json")
+
+
+def hash_log_line(line: str) -> str:
+    return hashlib.sha256(line.strip().encode('utf-8')).hexdigest()
+
+
+def extract_critical_logs(file_content: str) -> dict:
+    critical_logs = {}
+    for line in file_content.splitlines():
+        if "SECURITY" in line or "admin" in line or "root" in line:
+            h = hash_log_line(line)
+            critical_logs[h] = line.strip()
+    return critical_logs
 
 
 @st.cache_resource
 def load_blockchain_config():
-    """Загружает ABI и config, кэширует результат."""
-    CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-    BLOCKCHAIN_DIR = os.path.abspath(
-        os.path.join(CURRENT_DIR, "..", "..", "blockchain")
-    )
+    BLOCKCHAIN_DIR = os.path.join(PROJECT_ROOT, "blockchain")
     config_path = os.path.join(BLOCKCHAIN_DIR, "config.json")
     abi_path = os.path.join(BLOCKCHAIN_DIR, "abi.json")
-
     if not os.path.exists(config_path) or not os.path.exists(abi_path):
-        st.error(
-            f"Не найдены файлы конфигурации Web3! Ожидаемый путь: {BLOCKCHAIN_DIR}"
-        )
         return None, None
-
-    with open(config_path, "r") as f:
-        config = json.load(f)
-    with open(abi_path, "r") as f:
-        abi = json.load(f)
+    with open(config_path, "r") as f: config = json.load(f)
+    with open(abi_path, "r") as f: abi = json.load(f)
     return config, abi
 
 
 def initialize_blockchain_service():
-    """Инициализирует сервис для работы с блокчейном (реальный или мок)."""
     config, abi = load_blockchain_config()
-    if not config or not abi:
-        st.warning("Конфиги не загружены. Используется Mock-сервис.")
-        return BlockchainServiceMock()
-
+    if not config or not abi: return BlockchainServiceMock()
     try:
-        # Проверяем, есть ли реальные значения в конфиге
-        if "<" in config.get("rpc_url", "") or "<" in config.get(
-            "contract_address", ""
-        ):
-            raise ValueError(
-                "В config.json не указаны реальные rpc_url или contract_address."
-            )
-
-        service = RealBlockchainService(
-            rpc_url=config["rpc_url"],
-            contract_address=config["contract_address"],
-            abi=abi,
+        return RealBlockchainService(
+            rpc_url=config["rpc_url"], contract_address=config["contract_address"], abi=abi
         )
-        # st.sidebar.success("Подключено к блокчейну")
-        return service
-    except Exception as e:
-        st.sidebar.warning(
-            f"Реальный сервис недоступен. Используется Mock. Ошибка: {e}"
-        )
+    except Exception:
         return BlockchainServiceMock()
 
 
-# --- 3. Управление состоянием (Session State) ---
 if "blockchain_service" not in st.session_state:
     st.session_state.blockchain_service = initialize_blockchain_service()
-if "golden_hash" not in st.session_state:
-    st.session_state.golden_hash = None
-if "last_tx" not in st.session_state:
-    st.session_state.last_tx = None
-
-# Получаем сервис из состояния сессии
 blockchain_service = st.session_state.blockchain_service
 
-
-# --- 4. Боковая панель ---
 with st.sidebar:
-    st.title("🛡️ ImmutableLog")
-    st.info("Децентрализованная система аудита логов на базе технологии блокчейн.")
-    st.header("Параметры системы")
+    st.markdown(f"""
+            <div class="sidebar-logo-container">
+                <img src="data:image/png;base64,{logo_b64}">
+                <div class="glitch-text" style="font-size: 22px; margin-top:15px; font-family: 'Glitch Goblin' !important;">IMMUTABLELOG</div>
+            </div>
+            """, unsafe_allow_html=True)
 
-    # Показываем, какой сервис используется
-    service_status = (
-        "Real" if isinstance(blockchain_service, RealBlockchainService) else "Mock"
-    )
-    st.metric(label="Статус сервиса", value=service_status)
+    st.markdown("<p style='text-align:center; font-size: 14px; opacity:0.8;'>Децентрализованная система аудита логов    </p>",
+                unsafe_allow_html=True)
+    st.markdown('<div class="chain-divider"></div>', unsafe_allow_html=True)
 
-    st.markdown("---")
-    st.subheader("Данные из блокчейна")
-    if st.button("🔄 Загрузить реестр логов", use_container_width=True):
+    st.subheader("Реестр блокчейна")
+
+    if st.button("Синхронизировать с сетью", use_container_width=True):
         try:
-            with st.spinner("Синхронизация с сетью..."):
-                all_logs = blockchain_service.get_all_logs()
+            with st.spinner("Синхронизация..."):
+                raw_logs = blockchain_service.get_all_logs()
 
-            if all_logs:
-                st.success(f"Найдено записей: {len(all_logs)}")
-                st.dataframe(all_logs, use_container_width=True, hide_index=True)
+            if raw_logs:
+                from datetime import datetime
+
+                formatted_data = []
+
+                for log in raw_logs:
+                    try:
+                        h = log.get('Хэш файла (SHA-256)')
+                        t = log.get('Timestamp (Блокчейн)')
+
+                        if h and t:
+                            formatted_data.append({
+                                "Событие (SHA-256)": str(h),
+                                "Дата и время": datetime.fromtimestamp(int(t))
+                            })
+                    except Exception:
+                        continue
+
+                if formatted_data:
+                    st.markdown(f"<div class='custom-alert'>Извлечено записей: {len(formatted_data)}</div>",
+                                unsafe_allow_html=True)
+                    st.dataframe(
+                        formatted_data,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "Событие (SHA-256)": st.column_config.TextColumn("Событие (SHA-256)", width="large"),
+                            "Дата и время": st.column_config.DatetimeColumn("Дата и время",
+                                                                            format="DD.MM.YYYY, HH:mm:ss"),
+                        },
+                    )
+                else:
+                    st.markdown("<div class='custom-alert custom-error'>Данные не соответствуют формату.</div>",
+                                unsafe_allow_html=True)
             else:
-                st.warning("Смарт-контракт пока пуст.")
-
+                st.markdown("<div class='custom-alert'>Реестр пуст.</div>", unsafe_allow_html=True)
         except Exception as e:
-            st.error(f"Ошибка при чтении из блокчейна: {e}")
+            st.markdown(f"<div class='custom-alert custom-error'>Ошибка: {e}</div>", unsafe_allow_html=True)
 
 
-# --- 5. Основной интерфейс ---
-st.title("Панель управления безопасностью")
-st.markdown("---")
+    flower_b64 = get_base64(os.path.join(ASSETS_DIR, "flower.png"))
+    st.markdown(
+        f'<div style="text-align:center; opacity:0.3; margin-top:50px;"><img src="data:image/png;base64,{flower_b64}" width="30"></div>',
+        unsafe_allow_html=True)
 
-tab1, tab2 = st.tabs(["Регистрация лога", "Аудит целостности"])
 
-# --- ВКЛАДКА 1: Регистрация нового лога ---
+icon_header("Панель аудитора", "lock", is_main=True)
+st.markdown('<div class="chain-divider"></div>', unsafe_allow_html=True)
+
+tab1, tab2 = st.tabs(["Регистрация событий", "Аудит инцидентов"])
 with tab1:
-    st.header("Шаг 1: Регистрация эталонного файла")
-    st.write(
-        "Загрузите оригинальный лог-файл. Его хэш будет сохранен в блокчейн как эталон."
-    )
-
-    uploaded_file_register = st.file_uploader(
-        "Выберите лог-файл для регистрации (.txt)",
-        type=["txt"],
-        key="register_uploader",
-    )
-
+    icon_header("Сбор критических событий", "file")
+    uploaded_file_register = st.file_uploader("Загрузите лог-файл (.txt)", type=["txt"], key="up_reg")
     if uploaded_file_register:
-        try:
-            file_bytes = uploaded_file_register.getvalue()
-            log_hash = calculate_sha256(file_bytes)
-            st.info(f"**Вычисленный SHA-256 хэш:** `{log_hash}`")
+        content = uploaded_file_register.getvalue().decode("utf-8")
+        critical_logs = extract_critical_logs(content)
+        if critical_logs:
+            st.markdown(f"<div class='custom-alert'>Обнаружено критических событий: {len(critical_logs)}</div>", unsafe_allow_html=True)
+            st.json(critical_logs)
+            if st.button("Записать в блокчейн"):
+                try:
+                    shadow_db = {}
+                    if os.path.exists(SHADOW_DB_PATH):
+                        with open(SHADOW_DB_PATH, "r") as f: shadow_db = json.load(f)
+                    progress_bar = st.progress(0)
+                    for idx, (h, text) in enumerate(critical_logs.items()):
+                        if h not in shadow_db:
+                            blockchain_service.register_hash(h)
+                            shadow_db[h] = text
+                            time.sleep(2)
+                        progress_bar.progress((idx + 1) / len(critical_logs))
 
-            if st.button("Записать хэш в блокчейн", key="register_button"):
-                with st.spinner("Отправка транзакции в сеть..."):
-                    tx_hash = blockchain_service.register_hash(log_hash)
+                    with open(SHADOW_DB_PATH, "w") as f:
+                        json.dump(shadow_db, f, indent=4, ensure_ascii=False)
+                    st.markdown("<div class='custom-alert'>Данные защищены.</div>", unsafe_allow_html=True)
 
-                st.success("**УСПЕХ!** Хэш зарегистрирован в блокчейне.")
-                st.code(f"Хэш транзакции: {tx_hash}", language="bash")
-                st.session_state.golden_hash = log_hash
-                st.session_state.last_tx = tx_hash
-                st.balloons()
-        except Exception as e:
-            st.error(f"Ошибка: {e}")
-
-# --- ВКЛАДКА 2: Аудит целостности файла ---
-with tab2:
-    st.header("Шаг 2: Аудит целостности файла")
-    if not st.session_state.golden_hash:
-        st.warning(
-            "Сначала зарегистрируйте эталонный хэш на вкладке 'Регистрация лога'."
-        )
-    else:
-        st.write(
-            "Теперь загрузите файл, который вы хотите проверить на предмет изменений."
-        )
-        st.code(
-            f"Эталонный хэш из блокчейна: {st.session_state.golden_hash}",
-            language="bash",
-        )
-
-        uploaded_file_audit = st.file_uploader(
-            "Выберите лог-файл для проверки (.txt)", type=["txt"], key="audit_uploader"
-        )
-
-        if uploaded_file_audit:
-            try:
-                file_bytes_audit = uploaded_file_audit.getvalue()
-                audit_hash = calculate_sha256(file_bytes_audit)
-                st.info(f"**Хэш проверяемого файла:** `{audit_hash}`")
-
-                if st.button("Сверить с эталоном в блокчейне", key="audit_button"):
-                    with st.spinner("Сверка хэшей..."):
-                        time.sleep(1)
-
-                    if audit_hash == st.session_state.golden_hash:
-                        st.success(
-                            "✅ УСПЕХ: Файл не был изменен. Целостность подтверждена."
-                        )
+                except Exception as e:
+                    error_msg = str(e)
+                    if "revert" in error_msg or "execution reverted" in error_msg:
+                        st.markdown("""
+                                        <div class='custom-alert custom-error'>
+                                            <b>Блокировка доступа</b><br>
+                                            Смарт-контракт отклонил транзакцию. Ваш приватный ключ не принадлежит авторизованному агенту.<br>
+                                            <i>Причина: OwnableUnauthorizedAccount</i>
+                                        </div>
+                                    """, unsafe_allow_html=True)
                     else:
-                        st.error(
-                            "🚨 АЛЕРТ: Файл был скомпрометирован! Хэши не совпадают."
-                        )
-                        with st.expander("Показать детали расхождения"):
-                            st.text(
-                                f"Ожидаемый хэш (из блокчейна): {st.session_state.golden_hash}"
-                            )
-                            st.text(f"Фактический хэш (проверяемый файл): {audit_hash}")
-            except Exception as e:
-                st.error(f"Ошибка: {e}")
+                        st.error(f"Техническая ошибка: {e}")
+with tab2:
+    icon_header("Проверка целостности", "file_search")
+    uploaded_audit = st.file_uploader("Загрузите журнал для проверки (.txt)", type=["txt"], key="up_aud")
+    if uploaded_audit:
+        if st.button("Инициировать проверку", type="primary"):
+            with st.spinner("Анализ криптографических следов..."):
+                content = uploaded_audit.getvalue().decode("utf-8")
+                file_hashes = set(extract_critical_logs(content).keys())
+                shadow_db = {}
+                if os.path.exists(SHADOW_DB_PATH):
+                    with open(SHADOW_DB_PATH, "r") as f: shadow_db = json.load(f)
+                blockchain_hashes = set(shadow_db.keys())
+                missing_hashes = blockchain_hashes - file_hashes
+                if len(missing_hashes) == 0:
+                    st.markdown(
+                        "<div class='custom-alert'>Целостность журнала подтверждена.</div>",
+                        unsafe_allow_html=True)
+                else:
+                    st.markdown(
+                        "<div class='custom-alert custom-error'>Внимание: обнаружена компрометация журнала. Выявлено удаление записей.</div>",
+                        unsafe_allow_html=True)
+                    st.markdown("### Восстановленные фрагменты:")
+                    for h in missing_hashes:
+                        original_text = shadow_db.get(h, "Не удалось восстановить текст")
+                        st.markdown(f"> <span class='shadow-text'>{original_text}</span>", unsafe_allow_html=True)
+                        st.caption(f"Хэш-доказательство: {h}")
+st.markdown('<div style="margin-top:150px; opacity:0.1; text-align:center; font-family:monospace;">01011001 01001011 01000001</div>', unsafe_allow_html=True)

@@ -6,11 +6,7 @@ from src.core.hashing import calculate_sha256, BlockchainServiceMock
 def test_calculate_sha256_valid_data() -> None:
     """Проверка правильности вычисления хэша динамически."""
     data = b"hello blockchain"
-
-    # Считаем хэш эталонным методом hashlib прямо в тесте
     expected = hashlib.sha256(data).hexdigest()
-
-    # Проверяем, что наша функция выдает то же самое
     assert calculate_sha256(data) == expected
 
 

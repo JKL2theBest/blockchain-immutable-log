@@ -3,15 +3,12 @@ import time
 from abc import ABC, abstractmethod
 from typing import final, cast
 import os
-
+from eth_account import Account
 from dotenv import load_dotenv
 from eth_typing import ChecksumAddress
 from web3 import Web3
-from web3.exceptions import ContractLogicError
 from web3.middleware.proof_of_authority import ExtraDataToPOAMiddleware
-from web3.types import TxParams
 
-# Загружаем переменные окружения из .env файла
 load_dotenv()
 
 
@@ -39,7 +36,6 @@ class RealBlockchainService(BlockchainService):
 
     def __init__(self, rpc_url: str, contract_address: str, abi: list):
         self.w3 = Web3(Web3.HTTPProvider(rpc_url))
-        # Важно для сетей типа Ganache/PoA
         self.w3.middleware_onion.inject(
             ExtraDataToPOAMiddleware,
             layer=0,
@@ -64,32 +60,34 @@ class RealBlockchainService(BlockchainService):
         self.account = self.w3.eth.account.from_key(private_key)
         self.w3.eth.default_account = self.account.address
 
-    def register_hash(self, file_hash: str) -> str:
-        """Формирует, подписывает и отправляет транзакцию в смарт-контракт."""
-        print(f"[*] Отправка транзакции для хэша: {file_hash[:10]}...")
-        nonce = self.w3.eth.get_transaction_count(self.account.address)
+    def register_hash(self, log_hash: str) -> str:
+        load_dotenv(override=True)
+        pk = os.getenv("OWNER_PRIVATE_KEY")
 
-        tx_params: TxParams = {
-            "from": self.account.address,
-            "nonce": nonce,
-        }
+        if not pk:
+            raise Exception("OWNER_PRIVATE_KEY не найден в .env")
 
+        account = Account.from_key(pk)
         try:
-            tx = self.contract.functions.registerHash(file_hash).build_transaction(
-                tx_params
-            )
-            signed_tx = self.w3.eth.account.sign_transaction(
-                tx, private_key=self.account.key
-            )
-            tx_hash = self.w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-            receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
+            contract_owner = self.contract.functions.owner().call()
+        except:
+            contract_owner = account.address
+        if account.address.lower() != contract_owner.lower():
+            print(f"DEBUG: Наш адрес {account.address}, а владелец {contract_owner}")
+            raise Exception("execution reverted: OwnableUnauthorizedAccount")
+        nonce = self.w3.eth.get_transaction_count(account.address)
+        dict_transaction = self.contract.functions.registerHash(log_hash).build_transaction({
+            'chainId': 1337,
+            'gas': 500000,
+            'gasPrice': self.w3.to_wei('1', 'gwei'),
+            'nonce': nonce,
+            'from': account.address,
+        })
 
-            if receipt["status"] != 1:
-                raise Exception(f"Транзакция не удалась (reverted). Receipt: {receipt}")
-
-            return tx_hash.hex()
-        except ContractLogicError as e:
-            raise Exception(f"Ошибка логики смарт-контракта (нет прав?): {e}")
+        signed_tx = self.w3.eth.account.sign_transaction(dict_transaction, private_key=pk)
+        tx_hash = self.w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        self.w3.eth.wait_for_transaction_receipt(tx_hash)
+        return tx_hash.hex()
 
     def get_all_logs(self) -> list[dict]:
         """Считывает все сохраненные логи напрямую из смарт-контракта."""
