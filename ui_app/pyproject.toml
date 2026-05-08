@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "UI and Core logic for ImmutableLog"
 package-mode = false
 authors = [
+    {name = "ElizavetaShangina",email = "email@gmail.com"},
     {name = "JKL2theBest",email = "muhammet.jkl2.suhanguylev@gmail.com"}
 ]
 readme = "README.md"

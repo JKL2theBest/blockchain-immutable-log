@@ -210,6 +210,5 @@ __marimo__/
 shadow_db.json
 
 *.py[cod]
-.venv/
 # Docker
 .docker_temp/

@@ -1,83 +1,78 @@
-# blockchain-immutable-log
-Децентрализованная система неизменяемого аудита критических событий ИТ-инфраструктуры (ImmutableLog).
+# ImmutableLog: Децентрализованный аудит логов
 
-## ТЕКУЩИЙ СТАТУС
-Успешно протестировано сетевое взаимодействие: UI-интерфейс на Streamlit корректно подключается к удаленной ноде Ganache, читает ABI и config.json, и вытягивает реальные записи из смарт-контракта. Автотесты (Pytest) проходят, UI валидирует хэши и ловит подмену файлов. 
+**ImmutableLog** — это Proof-of-Concept (PoC) система, разработанная в рамках дисциплины "Технологии и безопасность блокчейна". Проект демонстрирует, как технология блокчейн может решить проблему компрометации лог-файлов при кибератаках.
 
-# TODO:
+При получении root-доступа к серверу злоумышленник первым делом изменяет или удаляет логи (`auth.log`, `syslog`), чтобы скрыть следы. Наша система решает эту проблему, сохраняя криптографические "отпечатки" критических событий в смарт-контракте, что делает аудит неизменяемым (immutable) и достоверным.
 
-# 1. Смарт-контракт (Security Update) - Ответственная: Лиза
+## Ключевые особенности
 
+*   **Построчный анализ:** Система не хэширует весь файл целиком, а находит и обрабатывает только критически важные строки лога (например, с ключевыми словами `SECURITY`, `root`, `admin`).
+*   **Безопасность по умолчанию (Secure-by-Design):** В блокчейн отправляется только SHA-256 хэш строки, а не ее содержимое. Восстановить исходный текст из хэша невозможно.
+*   **Защита смарт-контракта:** Контракт построен на базе стандарта OpenZeppelin `Ownable`, что защищает его от несанкционированной записи и DDoS-спама. Дополнительно реализован механизм `rate limiting` (кулдаун) для предотвращения слишком частых транзакций.
+*   **Восстановление улик:** Система ведет локальную "теневую базу" (`shadow_db.json`), что позволяет при аудите не просто выявить факт удаления записей, но и восстановить их оригинальный текст.
+*   **Enterprise-подход:** Весь проект упакован в Docker, управляется через Poetry и покрыт автотестами (Pytest).
+
+## Стек технологий
+
+*   **Блокчейн:** Solidity, OpenZeppelin, Web3.py
+*   **Бэкенд и UI:** Python 3.12+, Streamlit
+*   **Инфраструктура:** Docker, Docker Compose
+*   **Качество кода:** Poetry, Pytest, Ruff, Mypy
+
+## Быстрый старт (Docker Compose)
+
+### Шаг 1: Подготовка окружения
+1.  **Запустите локальный блокчейн:** Установите и запустите [Ganache](https://trufflesuite.com/ganache/).
+2.  **Разверните смарт-контракт:**
+    *   Откройте [Remix IDE](https://remix.ethereum.org/).
+    *   Вставьте код из `blockchain/immutableLog.sol` и скомпилируйте его.
+    *   Разверните (Deploy) контракт в ваш локальный Ganache.
+    *   Скопируйте адрес контракта, ABI и **приватный ключ** аккаунта-владельца.
+
+### Шаг 2: Конфигурация
+1.  **Создайте файл `.env`** в папке `ui_app/` по образцу:
+    ```env
+    # Подключение к вашему Ganache
+    WEB3_RPC_URL=http://host.docker.internal:7545
+    WEB3_CHAIN_ID=1337
+    CONTRACT_ADDRESS=0x...ВАШ_АДРЕС_КОНТРАКТА...
+
+    # Приватный ключ аккаунта, который развернул контракт
+    OWNER_PRIVATE_KEY=0x...ВАШ_ПРИВАТНЫЙ_КЛЮЧ...
+    ```
+2.  **Обновите ABI:** Скопируйте новый ABI из Remix в файл `blockchain/abi.json`.
+
+### Шаг 3: Запуск приложения
+Выполните команду в папке `ui_app/`:
+```bash
+docker compose up --build -d
 ```
-RemixAI Assistant
-Is there any vulnerability in the pasted code?
-You
-Is there any vulnerability in the pasted code?
-AI
-This contract does not handle funds or sensitive operations, so it has no direct risk of fund loss or scams. However, it has minor issues:
+Приложение станет доступно по адресу `http://localhost:8501`.
 
-1. No access control: Anyone can call registerHash, potentially spamming the auditTrail with fake entries.
-2. No input validation: _hash could be empty or malformed.
-3. Gas costs: Unbounded auditTrail array could make iteration expensive.
-No critical vulnerabilities (e.g., reentrancy, overflows) exist. For a production audit log, add access control (e.g., onlyOwner) and input checks.
+## Тестирование
+
+Для проверки качества кода предусмотрены автотесты. Выполните команду в папке `ui_app/`:
+```bash
+# Запуск всех тестов (Unit + Integration)
+pytest
+
+# Проверка типизации
+mypy .
+
+# Проверка стиля кода
+ruff check .
 ```
 
-Проверить:
+## Структура проекта
 
-```Solidity
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+*   `blockchain/`: Содержит исходный код смарт-контракта (`.sol`), его ABI и (устаревший) скрипт-агент.
+*   `ui_app/`: Основной модуль приложения.
+    *   `src/app.py`: Главный файл Streamlit-интерфейса.
+    *   `src/core/hashing.py`: Бизнес-логика, классы для работы с блокчейном.
+    *   `tests/`: Автотесты для `core` и `app`.
+    *   `assets/`: Иконки, шрифты и другие статические ресурсы.
+    *   `Dockerfile` & `docker-compose.yml`: Конфигурация для контейнеризации.
+*   `shadow_db.json`: Локальная база данных для восстановления удаленных логов.
 
-// NEW: Импортируем стандарт безопасности для управления доступом
-import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/access/Ownable.sol";
-
-// NEW: Наследуемся от Ownable, чтобы получить модификатор 'onlyOwner'
-contract ImmutableLog is Ownable {
-
-    struct LogEntry {
-        string fileHash;
-        uint256 timestamp;
-    }
-
-    LogEntry[] public auditTrail;
-
-    event HashRegistered(string indexed fileHash, uint256 timestamp);
-
-    // NEW: Добавлен модификатор 'onlyOwner'. Теперь эту функцию может вызвать только владелец контракта.
-    function registerHash(string memory _hash) public onlyOwner {
-        // NEW: Проверка на пустую строку. Если хэш пустой, транзакция будет отменена.
-        require(bytes(_hash).length > 0, "Hash cannot be empty");
-
-        auditTrail.push(LogEntry(_hash, block.timestamp));
-        emit HashRegistered(_hash, block.timestamp);
-    }
-
-    function getLogsCount() public view returns (uint256) {
-        return auditTrail.length;
-    }
-}
-```
-
-# 2. Интеграция записи в UI - Ответственный: Мухаммет/Артём
-
-Сейчас кнопка "Записать в блокчейн" в интерфейсе использует `BlockchainServiceMock`. Нужно заменить его на реальный сервис, который будет отправлять транзакции.
-
-**Задачи:**
-
-*   В `src/core/hashing.py` создать новый класс `RealBlockchainService(BlockchainService)`.
-*   Перенести логику отправки транзакции из `blockchain/agent.py` внутрь этого класса.
-*   Решить вопрос с приватным ключом.
-
-# 3. Рефакторинг и чистота кода - Ответственный: Мухаммет/Лиза
-
-Нужно привести репозиторий в идеальное состояние.
-
-**Задачи:**
-
-*   **Обновить тесты:** Убедиться, что все тесты (`pytest`) продолжают работать после интеграции реального сервиса (все реальные сетевые вызовы в тестах должны быть "замоканы").
-
-
-
-# 4. Подготовка финальной документации - Ответственный: Артём
-
-Собрать финальный отчет и презентацию.
+---
+*Проект выполнен студентами Университета ИТМО, ФБИТ, 2026 г.*

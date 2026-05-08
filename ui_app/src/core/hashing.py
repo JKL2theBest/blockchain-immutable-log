@@ -34,57 +34,60 @@ class RealBlockchainService(BlockchainService):
     Реальный сервис взаимодействия со смарт-контрактом через Web3.py.
     """
 
-    def __init__(self, rpc_url: str, contract_address: str, abi: list):
+    def __init__(self, abi: list):
+        rpc_url = os.getenv("WEB3_RPC_URL")
+        contract_address = os.getenv("CONTRACT_ADDRESS")
+
+        if not rpc_url or not contract_address:
+            raise ValueError("WEB3_RPC_URL или CONTRACT_ADDRESS не найдены в .env")
+
         self.w3 = Web3(Web3.HTTPProvider(rpc_url))
-        self.w3.middleware_onion.inject(
-            ExtraDataToPOAMiddleware,
-            layer=0,
-        )
+        self.w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
+
         if not self.w3.is_connected():
             raise ConnectionError(f"Не удалось подключиться к сети: {rpc_url}")
 
         checksum_address = cast(
-            ChecksumAddress,
-            Web3.to_checksum_address(contract_address),
+            ChecksumAddress, Web3.to_checksum_address(contract_address)
         )
+        self.contract = self.w3.eth.contract(address=checksum_address, abi=abi)
 
-        self.contract = self.w3.eth.contract(
-            address=checksum_address,
-            abi=abi,
-        )
-
-        private_key = os.getenv("PRIVATE_KEY")
-        if not private_key:
-            raise ValueError("PRIVATE_KEY не найден в переменных окружения.")
-
-        self.account = self.w3.eth.account.from_key(private_key)
-        self.w3.eth.default_account = self.account.address
+        self.chain_id = int(os.getenv("WEB3_CHAIN_ID", 1337))
 
     def register_hash(self, log_hash: str) -> str:
-        load_dotenv(override=True)
         pk = os.getenv("OWNER_PRIVATE_KEY")
-
         if not pk:
             raise Exception("OWNER_PRIVATE_KEY не найден в .env")
 
         account = Account.from_key(pk)
+
+        # Проверка владельца
         try:
             contract_owner = self.contract.functions.owner().call()
-        except:
-            contract_owner = account.address
-        if account.address.lower() != contract_owner.lower():
-            print(f"DEBUG: Наш адрес {account.address}, а владелец {contract_owner}")
-            raise Exception("execution reverted: OwnableUnauthorizedAccount")
-        nonce = self.w3.eth.get_transaction_count(account.address)
-        dict_transaction = self.contract.functions.registerHash(log_hash).build_transaction({
-            'chainId': 1337,
-            'gas': 500000,
-            'gasPrice': self.w3.to_wei('1', 'gwei'),
-            'nonce': nonce,
-            'from': account.address,
-        })
+            if account.address.lower() != contract_owner.lower():
+                raise Exception("execution reverted: OwnableUnauthorizedAccount")
+        except Exception as e:
+            if "OwnableUnauthorizedAccount" in str(e):
+                raise e
 
-        signed_tx = self.w3.eth.account.sign_transaction(dict_transaction, private_key=pk)
+        nonce = self.w3.eth.get_transaction_count(account.address)
+
+        # Динамический chainId
+        dict_transaction = self.contract.functions.registerHash(
+            log_hash
+        ).build_transaction(
+            {
+                "chainId": self.chain_id,
+                "gas": 500000,
+                "gasPrice": self.w3.to_wei("1", "gwei"),
+                "nonce": nonce,
+                "from": account.address,
+            }
+        )
+
+        signed_tx = self.w3.eth.account.sign_transaction(
+            dict_transaction, private_key=pk
+        )
         tx_hash = self.w3.eth.send_raw_transaction(signed_tx.raw_transaction)
         self.w3.eth.wait_for_transaction_receipt(tx_hash)
         return tx_hash.hex()
