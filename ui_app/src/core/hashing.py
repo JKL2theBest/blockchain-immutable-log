@@ -7,7 +7,6 @@ from eth_account import Account
 from dotenv import load_dotenv
 from eth_typing import ChecksumAddress
 from web3 import Web3
-from web3.middleware.proof_of_authority import ExtraDataToPOAMiddleware
 
 load_dotenv()
 
@@ -21,12 +20,12 @@ class BlockchainService(ABC):
     @abstractmethod
     def register_hash(self, file_hash: str) -> str:
         """Регистрирует хэш файла в смарт-контракте."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def get_all_logs(self) -> list[dict]:
         """Получает все записи из смарт-контракта."""
-        pass
+        raise NotImplementedError
 
 
 class RealBlockchainService(BlockchainService):
@@ -42,7 +41,6 @@ class RealBlockchainService(BlockchainService):
             raise ValueError("WEB3_RPC_URL или CONTRACT_ADDRESS не найдены в .env")
 
         self.w3 = Web3(Web3.HTTPProvider(rpc_url))
-        self.w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
 
         if not self.w3.is_connected():
             raise ConnectionError(f"Не удалось подключиться к сети: {rpc_url}")
@@ -52,8 +50,6 @@ class RealBlockchainService(BlockchainService):
         )
         self.contract = self.w3.eth.contract(address=checksum_address, abi=abi)
 
-        self.chain_id = int(os.getenv("WEB3_CHAIN_ID", 1337))
-
     def register_hash(self, log_hash: str) -> str:
         pk = os.getenv("OWNER_PRIVATE_KEY")
         if not pk:
@@ -61,23 +57,19 @@ class RealBlockchainService(BlockchainService):
 
         account = Account.from_key(pk)
 
-        # Проверка владельца
         try:
             contract_owner = self.contract.functions.owner().call()
-            if account.address.lower() != contract_owner.lower():
-                raise Exception("execution reverted: OwnableUnauthorizedAccount")
         except Exception as e:
-            if "OwnableUnauthorizedAccount" in str(e):
-                raise e
+            raise RuntimeError(f"Contract owner read failed: {e}")
 
-        nonce = self.w3.eth.get_transaction_count(account.address)
+        if account.address.lower() != contract_owner.lower():
+            raise Exception("execution reverted: OwnableUnauthorizedAccount")
 
-        # Динамический chainId
-        dict_transaction = self.contract.functions.registerHash(
-            log_hash
-        ).build_transaction(
+        nonce = self.w3.eth.get_transaction_count(account.address, "pending")
+
+        tx = self.contract.functions.registerHash(log_hash).build_transaction(
             {
-                "chainId": self.chain_id,
+                "chainId": self.w3.eth.chain_id,
                 "gas": 500000,
                 "gasPrice": self.w3.to_wei("1", "gwei"),
                 "nonce": nonce,
@@ -85,11 +77,11 @@ class RealBlockchainService(BlockchainService):
             }
         )
 
-        signed_tx = self.w3.eth.account.sign_transaction(
-            dict_transaction, private_key=pk
-        )
+        signed_tx = Account.sign_transaction(tx, pk)
         tx_hash = self.w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+
         self.w3.eth.wait_for_transaction_receipt(tx_hash)
+
         return tx_hash.hex()
 
     def get_all_logs(self) -> list[dict]:
@@ -98,7 +90,8 @@ class RealBlockchainService(BlockchainService):
             total_logs = self.contract.functions.getLogsCount().call()
             logs = []
             for i in range(total_logs):
-                log_data = self.contract.functions.auditTrail(i).call()
+                log_data = self.contract.functions.getLogEntry(i).call()
+
                 logs.append(
                     {
                         "Хэш файла (SHA-256)": log_data[0],

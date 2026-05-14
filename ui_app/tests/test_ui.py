@@ -1,5 +1,6 @@
 import pytest
 from streamlit.testing.v1 import AppTest
+from src.core.hashing import BlockchainServiceMock
 import os
 
 FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -10,9 +11,14 @@ SHADOW_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "shadow_db.
 
 @pytest.fixture(autouse=True)
 def patch_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("WEB3_RPC_URL", "http://127.0.0.1:9999")
+    monkeypatch.setattr(
+        "src.app.initialize_blockchain_service", lambda: BlockchainServiceMock()
+    )
 
-    # Очищаем shadow_db перед каждым тестом
+    # Очищаем состояние мока, чтобы тесты не влияли друг на друга
+    BlockchainServiceMock._MOCK_STORAGE.clear()
+
+    # Очищаем локальную теневую БД
     if os.path.exists(SHADOW_DB_PATH):
         os.remove(SHADOW_DB_PATH)
 
