@@ -305,6 +305,9 @@ with tab1:
             st.json(critical_logs)
 
             if st.button("Записать в блокчейн"):
+                progress_container = st.empty()
+                msg_container = st.empty()
+
                 try:
                     whole_file_hash = hashlib.sha256(content.encode()).hexdigest()
                     seal_id = f"SEAL:{filename}:{whole_file_hash}"
@@ -329,8 +332,10 @@ with tab1:
                         st.stop()
 
                     current_step = 0
-                    pbar = st.progress(0, text="Подготовка транзакций...")
-                    msg_container = st.empty()
+
+                    pbar = progress_container.progress(
+                        0, text="Подготовка транзакций..."
+                    )
 
                     if needs_seal:
                         msg_container.info(f"Фиксация мастер-хэша: `{filename}`")
@@ -346,9 +351,7 @@ with tab1:
                     for h, text in new_events.items():
                         msg_container.info(f"Регистрация события: `{h[:8]}...`")
                         blockchain_service.register_hash(h)
-
                         st.session_state.shadow_db[filename]["events"][h] = text
-
                         current_step += 1
                         pbar.progress(
                             current_step / total_steps,
@@ -357,6 +360,8 @@ with tab1:
                         time.sleep(2.1)
 
                     msg_container.empty()
+                    progress_container.empty()
+
                     with open(SHADOW_DB_PATH, "w", encoding="utf-8") as f:
                         json.dump(
                             st.session_state.shadow_db, f, indent=4, ensure_ascii=False
@@ -367,6 +372,9 @@ with tab1:
                     )
 
                 except Exception as e:
+                    progress_container.empty()
+                    msg_container.empty()
+
                     error_msg = str(e)
                     if "revert" in error_msg or "execution reverted" in error_msg:
                         st.markdown(
