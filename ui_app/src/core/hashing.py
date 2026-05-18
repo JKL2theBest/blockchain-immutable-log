@@ -111,7 +111,6 @@ class BlockchainServiceMock(BlockchainService):
 
     def register_hash(self, file_hash: str) -> str:
         """Имитирует отправку хэша в смарт-контракт."""
-        print(f"[*] Имитация отправки хэша '{file_hash[:10]}...' в блокчейн...")
         time.sleep(1)
         self._MOCK_STORAGE.append(
             {
@@ -120,12 +119,10 @@ class BlockchainServiceMock(BlockchainService):
             }
         )
         mock_tx_hash = f"0x{hashlib.sha256(file_hash.encode()).hexdigest()[:40]}"
-        print(f"[+] Хэш успешно зарегистрирован в транзакции: {mock_tx_hash}")
         return mock_tx_hash
 
     def get_all_logs(self) -> list[dict]:
         """Возвращает данные из мок-хранилища."""
-        print("[*] Чтение данных из Mock-хранилища...")
         return self._MOCK_STORAGE
 
 

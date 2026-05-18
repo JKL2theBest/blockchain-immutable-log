@@ -118,19 +118,18 @@ def icon_header(text: str, icon_name: str, is_main: bool = False) -> None:
     st.markdown(html, unsafe_allow_html=True)
 
 
-def hash_log_line(filename: str, line: str) -> str:
-    """Генерирует хэш, привязанный к имени файла."""
-    payload = f"{filename}:{line.strip()}"
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+def hash_log_line(line: str) -> str:
+    """Генерирует хэш."""
+    return hashlib.sha256(line.strip().encode("utf-8")).hexdigest()
 
 
-def extract_critical_logs(file_content: str, filename: str) -> dict[str, str]:
-    """Извлекает критические логи с привязкой к имени файла."""
+def extract_critical_logs(file_content: str) -> dict[str, str]:
+    """Извлекает критические логи."""
     critical_logs = {}
     keywords = ["security", "admin", "root"]
     for line in file_content.splitlines():
         if any(k in line.lower() for k in keywords):
-            h = hash_log_line(filename, line)
+            h = hash_log_line(line)
             critical_logs[h] = line.strip()
     return critical_logs
 
@@ -155,13 +154,6 @@ def initialize_blockchain_service() -> BlockchainService:
     try:
         return RealBlockchainService(abi=abi)
     except Exception as e:
-        st.sidebar.markdown(
-            "<div class='custom-alert custom-error' style='text-align:center;'>"
-            "<b>СЕТЬ НЕДОСТУПНА</b><br>"
-            "<span style='font-size: 0.8em;'>Связь с контрактом потеряна. Активирован режим локальной эмуляции (Mock RAM).</span>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
         print(f"Fallback to Mock: {e}")
         return BlockchainServiceMock()
 
@@ -186,24 +178,11 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-    service_status = (
-        "ONLINE (GANACHE DEVCHAIN)"
-        if isinstance(blockchain_service, RealBlockchainService)
-        else "OFFLINE (MOCK RAM)"
-    )
-    color = "#8EB69C" if "ONLINE" in service_status else "#ff4b4b"
-    st.markdown(
-        f"<div style='text-align:center; font-family:monospace; color:{color}; border: 1px dashed {color}; padding: 8px; margin-bottom: 15px; background-color: rgba(0,0,0,0.2);'>"
-        f"STATUS: {service_status}"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
-
     st.markdown('<div class="chain-divider"></div>', unsafe_allow_html=True)
 
     st.subheader("Реестр блокчейна")
 
-    if st.button("Синхронизировать с сетью", use_container_width=True):
+    if st.button("Синхронизировать с сетью", width="stretch"):
         try:
             with st.spinner("Синхронизация..."):
                 raw_logs = blockchain_service.get_all_logs()
@@ -235,7 +214,7 @@ with st.sidebar:
                     )
                     st.dataframe(
                         formatted_data,
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True,
                         column_config={
                             "Событие (SHA-256)": st.column_config.TextColumn(
@@ -286,6 +265,7 @@ if "shadow_db" not in st.session_state:
         st.session_state.shadow_db = {}
 
 tab1, tab2 = st.tabs(["Регистрация событий", "Аудит инцидентов"])
+
 with tab1:
     icon_header("Сбор критических событий", "file")
     uploaded_file_register = st.file_uploader(
@@ -293,9 +273,7 @@ with tab1:
     )
     if uploaded_file_register:
         content = uploaded_file_register.getvalue().decode("utf-8")
-        filename = uploaded_file_register.name
-
-        critical_logs = extract_critical_logs(content, filename)
+        critical_logs = extract_critical_logs(content)
 
         if critical_logs:
             st.markdown(
@@ -307,51 +285,26 @@ with tab1:
             if st.button("Записать в блокчейн"):
                 progress_container = st.empty()
                 msg_container = st.empty()
-
                 try:
-                    whole_file_hash = hashlib.sha256(content.encode()).hexdigest()
-                    seal_id = f"SEAL:{filename}:{whole_file_hash}"
-
-                    if filename not in st.session_state.shadow_db:
-                        st.session_state.shadow_db[filename] = {
-                            "seal": None,
-                            "events": {},
-                        }
-
-                    needs_seal = st.session_state.shadow_db[filename]["seal"] != seal_id
                     new_events = {
                         h: txt
                         for h, txt in critical_logs.items()
-                        if h not in st.session_state.shadow_db[filename]["events"]
+                        if h not in st.session_state.shadow_db
                     }
-
-                    total_steps = (1 if needs_seal else 0) + len(new_events)
-
-                    if total_steps == 0:
-                        st.info("Все данные этого файла уже зафиксированы в блокчейне.")
+                    if not new_events:
+                        st.info("События из этого файла уже зафиксированы в блокчейне.")
                         st.stop()
 
                     current_step = 0
-
+                    total_steps = len(new_events)
                     pbar = progress_container.progress(
                         0, text="Подготовка транзакций..."
                     )
 
-                    if needs_seal:
-                        msg_container.info(f"Фиксация мастер-хэша: `{filename}`")
-                        blockchain_service.register_hash(seal_id)
-                        st.session_state.shadow_db[filename]["seal"] = seal_id
-                        current_step += 1
-                        pbar.progress(
-                            current_step / total_steps,
-                            text=f"Выполнено: {current_step}/{total_steps}",
-                        )
-                        time.sleep(2.1)
-
                     for h, text in new_events.items():
                         msg_container.info(f"Регистрация события: `{h[:8]}...`")
                         blockchain_service.register_hash(h)
-                        st.session_state.shadow_db[filename]["events"][h] = text
+                        st.session_state.shadow_db[h] = text
                         current_step += 1
                         pbar.progress(
                             current_step / total_steps,
@@ -367,28 +320,28 @@ with tab1:
                             st.session_state.shadow_db, f, indent=4, ensure_ascii=False
                         )
 
-                    st.success(
-                        "Все криптографические якоря успешно зафиксированы в блокчейне."
-                    )
+                    st.success("Операция завершена. Данные защищены.")
 
                 except Exception as e:
                     progress_container.empty()
                     msg_container.empty()
 
                     error_msg = str(e)
-                    if "revert" in error_msg or "execution reverted" in error_msg:
+                    if "OwnableUnauthorizedAccount" in error_msg:
                         st.markdown(
-                            """
-                                <div class='custom-alert custom-error'>
-                                    <b>Блокировка доступа</b><br>
-                                    Смарт-контракт отклонил транзакцию. Ваш приватный ключ не принадлежит авторизованному агенту.<br>
-                                    <i>Причина: OwnableUnauthorizedAccount</i>
-                                </div>
-                            """,
+                            "<div class='custom-alert custom-error'>"
+                            "<b>Блокировка доступа</b><br>"
+                            "Смарт-контракт отклонил транзакцию. Ваш приватный ключ не принадлежит авторизованному агенту."
+                            "</div>",
                             unsafe_allow_html=True,
+                        )
+                    elif "HashAlreadyRegistered" in error_msg or "revert" in error_msg:
+                        st.warning(
+                            "Отклонено сетью: Один или несколько хэшей уже были зафиксированы в блокчейне ранее."
                         )
                     else:
                         st.error(f"Техническая ошибка: {e}")
+
 with tab2:
     icon_header("Проверка целостности", "file_search")
     uploaded_audit = st.file_uploader(
@@ -398,11 +351,7 @@ with tab2:
         if st.button("Инициировать проверку", type="primary"):
             with st.spinner("Анализ криптографических следов..."):
                 content = uploaded_audit.getvalue().decode("utf-8")
-                filename = uploaded_audit.name
-                current_whole_hash = hashlib.sha256(content.encode()).hexdigest()
-                current_file_hashes = set(
-                    extract_critical_logs(content, filename).keys()
-                )
+                current_file_hashes = set(extract_critical_logs(content).keys())
 
                 try:
                     onchain_logs = [
@@ -412,36 +361,31 @@ with tab2:
                 except Exception:
                     onchain_logs = []
 
-                seal_id = f"SEAL:{filename}:{current_whole_hash}"
-                seal_exists = seal_id in onchain_logs
+                missing_hashes = set(onchain_logs) - current_file_hashes
 
-                if not seal_exists:
-                    st.error(
-                        "КРИТИЧЕСКАЯ ОШИБКА: Общий хэш файла не совпадает с эталоном в блокчейне!"
-                    )
-                else:
-                    st.success(
-                        "Мастер-хэш подтвержден: структура файла соответствует оригиналу."
-                    )
-
-                missing_hashes = []
-                if filename in st.session_state.shadow_db:
-                    file_data = st.session_state.shadow_db[filename]
-                    for h in file_data["events"].keys():
-                        if h in onchain_logs and h not in current_file_hashes:
-                            missing_hashes.append(h)
-
-                if len(missing_hashes) > 0:
+                if len(missing_hashes) == 0:
                     st.markdown(
-                        f"<div class='custom-alert custom-error'>Выявлено удаление критических записей: {len(missing_hashes)}</div>",
+                        "<div class='custom-alert'>Целостность журнала подтверждена. Все записи на месте.</div>",
                         unsafe_allow_html=True,
                     )
+                else:
+                    st.markdown(
+                        f"<div class='custom-alert custom-error'>Внимание: обнаружена компрометация журнала. Выявлено удаление записей: {len(missing_hashes)}</div>",
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown("### Восстановленные фрагменты:")
                     for h in missing_hashes:
-                        orig_text = st.session_state.shadow_db[filename]["events"].get(
-                            h
+                        original_text = st.session_state.shadow_db.get(
+                            h,
+                            "[Текст недоступен локально, но след в блокчейне существует]",
                         )
-                        st.markdown(f"> `{orig_text}`")
+                        st.markdown(
+                            f"> <span class='shadow-text'>{original_text}</span>",
+                            unsafe_allow_html=True,
+                        )
+                        st.caption(f"Хэш-доказательство: {h}")
+
 st.markdown(
-    '<div style="margin-top:150px; opacity:0.1; text-align:center; font-family:monospace;">01011001 01001011 01000001</div>',
+    '<div style="margin-top:150px; opacity:0.1; text-align:center; font-family:monospace;">01000001 01001101 01000101</div>',
     unsafe_allow_html=True,
 )
